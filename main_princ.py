@@ -12,6 +12,7 @@ from collections import defaultdict
 import ipaddress
 import netifaces
 import threading
+from concurrent.futures import ThreadPoolExecutor
  
 print("ANALISE DE TRAFEGO \nAUTHOR: ADRYAN")
 os_type = platform.system()
@@ -51,11 +52,12 @@ def mostrar_pacote(pacote):
     if IP in pacote:
         print(f"{pacote[IP].src} -> {pacote[IP].dst}")       
 
-
-def analise_menu():
+#IPS
+def attack_menu():
     while True:
-        print("\n=== MODO SEGURANÇA ===")
-        print("1 - Sniffing")
+        print("\n=== MODO ATAQUE ===")
+        print("1 - Sniffing ativo")
+        print("2 - Spoffing ativo")
         print("2 - Localização IP")
         print("3 - Logs")
         print("0 - Voltar")
@@ -86,18 +88,20 @@ def analise_menu():
 
 
 
-
+#IDS
 def security_menu():
     while True:
         print("\n=== MODO SEGURANÇA ===")
-        print("2 - anti-intrusão com tcp/udp/sniff")
-        print("3 - Varredura de IP+MAC com icmp/arp")
-        print("4 - Logs")
+        print("1 - anti-intrusão com tcp/udp/sniff")
+        print("2 - Varredura de IP+MAC+SPOFFING")
+        print("4 - PORT SCAN")
+        
+        print("10 - Logs")
         print("0 - Voltar")
         escolha = input(">> ").strip()
 
         #ANTI-INTRUSÃO
-        if escolha == "2":
+        if escolha == "1":
             ips_suspeitos = set()
             lock = threading.Lock()
             contagem_ip = defaultdict(int)
@@ -143,8 +147,8 @@ def security_menu():
             t1.join()
             t2.join()
  
-            #ARP+ICMP
-        elif escolha == "3":
+            #ARP+ICMP+SPOFFING
+        elif escolha == "2":
             dhcp = netifaces.gateways()
             ip_gateway = dhcp['default'][2][0]
 
@@ -152,6 +156,7 @@ def security_menu():
             rede = ipaddress.IPv4Network(f"{ip_gateway}/24", strict=False)
 
             positivos = []
+            ips_mac = []
 
             for ip in rede.hosts():
                 try:
@@ -166,13 +171,94 @@ def security_menu():
                     if resposta_arp:
                         for _, recebido in resposta_arp:
                             mac = recebido.hwsrc
+                            ip_mac = mac, ip_str
+                            ips_mac.append(ip_mac)
+
                         print(f"[ARP] {ip_str} -> {mac}")
                     else:
                         print("Não foi possivel receber o MAC verificar se há bloqueio")
 
                 except subprocess.CalledProcessError: 
                     pass
+                
+                ip_to_macs = {}
+                mac_to_ips = {}
 
+                for mac, ip in ips_mac:
+                    
+                    #verificação de mac para ip
+                    if mac in mac_to_ips:
+                        mac_to_ips[mac].append(ip)
+                    else:
+                        mac_to_ips[mac] = [ip]
+                    
+                    #verificação de ip para mac
+                    if ip in ip_to_macs:
+                        ip_to_macs[ip].add(mac)
+                    else:
+                        ip_to_macs[ip] = {mac}
+                    
+                    print("Realizando analise de fraude:")
+
+                    resultado = []
+
+                    for mac, ip_list in mac_to_ips.items():
+                        if len(set(ip_list)) > 1:
+                            resultado.append(ip_list)
+                        
+                        
+                    for ip, macs in ip_to_macs.items():
+                        if len(macs) > 1:
+                             resultado.append(macs)
+
+                    if len(resultado) > 0:
+                         print(f"POSSIVEL POFFING: {resultado}")
+
+        #PORTSCAN
+        elif escolha == "4":
+            dhcp = netifaces.gateways()
+            ip_gateway = dhcp['default'][2][0]
+            ips_ativos = []
+            portas_abertas = []
+
+            rede = ipaddress.IPv4Network(f"{ip_gateway}/24", strict=False)
+            #for ip in rede.hosts():
+
+            def ping_ip(ip):
+                        try:
+                            resposta = subprocess.check_output(f"ping -n 1 -w 200 {ip}", shell=True, stderr=subprocess.DEVNULL)
+                            ip_str = str(ip)
+                            print(f"[+] {ip_str} ATIVO")
+                            ips_ativos.append(ip_str)
+
+                        except:
+                            pass
+
+            with ThreadPoolExecutor(max_workers=100) as executor:
+                for ip in rede.hosts():
+                    executor.submit(ping_ip, ip)
+
+                    
+                    #PORT SCAN
+                    
+            def scan_port(ip, porta):
+                try:    
+                        inicio_conec = socket.socket()
+                        inicio_conec.settimeout(0.3)
+                        if inicio_conec.connect_ex((ip, porta)) == 0:
+                            print(f"[{ip}] Porta {porta} ABERTA")
+                        portas_abertas.append((ip, porta))
+                except:
+                    pass
+
+            time.sleep(5)
+
+            for ip in ips_ativos:
+                print(f"\n[~] Escaneando portas de {ip}")
+                with ThreadPoolExecutor(max_workers=100) as executor:
+                    for porta in range(1, 10001):
+                        executor.submit(scan_port, ip, porta)
+                    
                 #logs
 
         elif escolha == "4":
@@ -190,7 +276,7 @@ def security_menu():
 conection = {
     "ssid": get_ssid_auto,
     "security" : security_menu,
-    "analise" : analise_menu
+    "analise" : attack_menu
 }
 
 while True:
